@@ -1,3 +1,7 @@
+this is a public repo the actual one i wrote is in private, it's all messy, that's why i had to create a new one all the features, i implemented in that will be implemented in these aswell, by will implement slowly, like once in a week or 2 weeks
+
+happy coding :>
+
 # Smart Subtitle Generator
 
 A Python tool that automatically adds subtitles to videos by transcribing speech to text and embedding the resulting subtitles directly into the video.
