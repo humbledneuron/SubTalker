@@ -36,7 +36,7 @@ A Python tool that automatically adds subtitles to videos by transcribing speech
 1. Clone or download this repository:
    ```
    git clone https://github.com/humbledneuron/SubTalker.git
-   cd smart-subtitle-generator
+   cd SubTalker
    ```
 
 2. Install the required packages:
