@@ -1,5 +1,7 @@
 this is a public repo the actual one i wrote is in private, it's all messy, that's why i had to create a new one all the features, i implemented in that will be implemented in these aswell, by will implement slowly, like once in a week or 2 weeks
 
+all the contributions and suggestions are welcome, 
+
 happy coding :>
 
 # Smart Subtitle Generator
@@ -33,7 +35,7 @@ A Python tool that automatically adds subtitles to videos by transcribing speech
 
 1. Clone or download this repository:
    ```
-   git clone https://github.com/yourusername/smart-subtitle-generator.git
+   git clone https://github.com/humbledneuron/SubTalker.git
    cd smart-subtitle-generator
    ```
 
