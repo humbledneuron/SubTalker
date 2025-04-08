@@ -24,6 +24,7 @@ import main as subtitling_backend
 class SubtitleWorker(QThread):
     progress_update = pyqtSignal(str, int)
     finished = pyqtSignal(bool, str)
+    subtitles_extracted = pyqtSignal(list)
     
     def __init__(self, input_path, output_path, model_path, subtitle_settings):
         super().__init__()
@@ -54,14 +55,7 @@ class SubtitleWorker(QThread):
             
             self._apply_subtitle_settings(subtitles)
             
-            self.progress_update.emit("Adding subtitles to video...", 70)
-            
-            output_video = subtitling_backend.create_subtitled_video(
-                self.input_path, subtitles, self.output_path)
-            
-            if not output_video:
-                self.finished.emit(False, "Failed to create output video")
-                return
+            self.subtitles_extracted.emit(subtitles)
             
             self.progress_update.emit("Cleaning up...", 95)
             self._cleanup()
@@ -82,12 +76,41 @@ class SubtitleWorker(QThread):
                 except:
                     pass
 
+class VideoGenerationWorker(QThread):
+    progress_update = pyqtSignal(str, int)
+    finished = pyqtSignal(bool, str, str)
+    
+    def __init__(self, input_path, output_path, subtitles, style_settings):
+        super().__init__()
+        self.input_path = input_path
+        self.output_path = output_path
+        self.subtitles = subtitles
+        self.style_settings = style_settings
+        
+    def run(self):
+        try:
+            self.progress_update.emit("Adding subtitles to video...", 30)
+            
+            output_video = subtitling_backend.create_subtitled_video(
+                self.input_path, self.subtitles, self.output_path)
+            
+            if not output_video:
+                self.finished.emit(False, "Failed to create output video", "")
+                return
+            
+            self.progress_update.emit("Video generation complete", 100)
+            self.finished.emit(True, "Video created successfully", self.output_path)
+            
+        except Exception as e:
+            self.finished.emit(False, f"An error occurred: {str(e)}", "")
+
 class SubtitleEditor(QWidget):
+    subtitle_updated = pyqtSignal()
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.subtitles = []
         self.current_index = -1
-        
         self.init_ui()
     
     def init_ui(self):
@@ -123,51 +146,136 @@ class SubtitleEditor(QWidget):
         
         editor_layout.addLayout(timing_layout)
         
+        button_layout = QHBoxLayout()
+        
         self.update_btn = QPushButton("Update Subtitle")
         self.update_btn.clicked.connect(self.update_subtitle)
-        editor_layout.addWidget(self.update_btn)
+        button_layout.addWidget(self.update_btn)
+        
+        self.delete_btn = QPushButton("Delete Subtitle")
+        self.delete_btn.clicked.connect(self.delete_subtitle)
+        button_layout.addWidget(self.delete_btn)
+        
+        editor_layout.addLayout(button_layout)
+        
+        new_subtitle_layout = QHBoxLayout()
+        self.new_subtitle_btn = QPushButton("Add New Subtitle")
+        self.new_subtitle_btn.clicked.connect(self.add_new_subtitle)
+        new_subtitle_layout.addWidget(self.new_subtitle_btn)
+        editor_layout.addLayout(new_subtitle_layout)
         
         editor_group.setLayout(editor_layout)
         layout.addWidget(editor_group)
         
         self.setLayout(layout)
+        
+        self.update_btn.setEnabled(False)
+        self.delete_btn.setEnabled(False)
     
     def load_subtitles(self, subtitles):
-        self.subtitles = subtitles
+        self.subtitles = subtitles.copy() if subtitles else []
         self.refresh_subtitle_list()
+        if self.subtitles:
+            self.subtitle_list.setCurrentRow(0)
+            self.update_btn.setEnabled(True)
+            self.delete_btn.setEnabled(True)
     
     def refresh_subtitle_list(self):
+        current_row = self.subtitle_list.currentRow()
         self.subtitle_list.clear()
         for subtitle in self.subtitles:
             start = subtitle["start_time"]
             end = subtitle["end_time"]
             text = subtitle["text"]
-            display_text = f"{self._format_time(start)} - {self._format_time(end)}: {text[:40]}..."
+            text_preview = text[:40] + ("..." if len(text) > 40 else "")
+            display_text = f"{self._format_time(start)} - {self._format_time(end)}: {text_preview}"
             self.subtitle_list.addItem(display_text)
+        
+        if current_row >= 0 and current_row < self.subtitle_list.count():
+            self.subtitle_list.setCurrentRow(current_row)
+        elif self.subtitle_list.count() > 0:
+            self.subtitle_list.setCurrentRow(0)
     
     def select_subtitle(self, index):
+        self.update_btn.setEnabled(index >= 0)
+        self.delete_btn.setEnabled(index >= 0)
+        
         if index < 0 or index >= len(self.subtitles):
+            self.current_index = -1
+            self.text_edit.clear()
+            self.start_time.setValue(0)
+            self.end_time.setValue(0)
             return
         
         self.current_index = index
         subtitle = self.subtitles[index]
         
+        self.text_edit.blockSignals(True)
+        self.start_time.blockSignals(True)
+        self.end_time.blockSignals(True)
+        
         self.text_edit.setText(subtitle["text"])
         self.start_time.setValue(subtitle["start_time"])
         self.end_time.setValue(subtitle["end_time"])
+        
+        self.text_edit.blockSignals(False)
+        self.start_time.blockSignals(False)
+        self.end_time.blockSignals(False)
     
     def update_subtitle(self):
-        if self.current_index < 0:
+        if self.current_index < 0 or self.current_index >= len(self.subtitles):
             return
         
-        self.subtitles[self.current_index]["text"] = self.text_edit.toPlainText()
-        self.subtitles[self.current_index]["start_time"] = self.start_time.value()
-        self.subtitles[self.current_index]["end_time"] = self.end_time.value()
+        new_text = self.text_edit.toPlainText()
+        new_start = self.start_time.value()
+        new_end = self.end_time.value()
+        
+        if new_start >= new_end:
+            QMessageBox.warning(self, "Invalid Time Range", 
+                                "Start time must be less than end time.")
+            return
+        
+        self.subtitles[self.current_index]["text"] = new_text
+        self.subtitles[self.current_index]["start_time"] = new_start
+        self.subtitles[self.current_index]["end_time"] = new_end
         
         self.refresh_subtitle_list()
+        self.subtitle_updated.emit()
+    
+    def delete_subtitle(self):
+        if self.current_index < 0 or self.current_index >= len(self.subtitles):
+            return
+        
+        reply = QMessageBox.question(
+            self, "Confirm Delete", 
+            "Are you sure you want to delete this subtitle?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            del self.subtitles[self.current_index]
+            self.refresh_subtitle_list()
+            self.subtitle_updated.emit()
+    
+    def add_new_subtitle(self):
+        last_time = 0
+        if self.subtitles:
+            last_time = self.subtitles[-1]["end_time"]
+        
+        new_subtitle = {
+            "text": "New subtitle text",
+            "start_time": last_time + 0.5,
+            "end_time": last_time + 3.5,
+            "words": []
+        }
+        
+        self.subtitles.append(new_subtitle)
+        self.refresh_subtitle_list()
+        self.subtitle_list.setCurrentRow(len(self.subtitles) - 1)
+        self.subtitle_updated.emit()
     
     def get_subtitles(self):
-        return self.subtitles
+        return self.subtitles.copy()
     
     def _format_time(self, seconds):
         mins = int(seconds // 60)
@@ -326,6 +434,9 @@ class VideoPlayer(QWidget):
         self.position_slider.sliderMoved.connect(self.set_position)
         controls_layout.addWidget(self.position_slider)
         
+        self.time_label = QLabel("00:00 / 00:00")
+        controls_layout.addWidget(self.time_label)
+        
         layout.addLayout(controls_layout)
         
         self.setLayout(layout)
@@ -333,6 +444,8 @@ class VideoPlayer(QWidget):
         self.media_player.playbackStateChanged.connect(self.media_state_changed)
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
+        
+        self.play_btn.setEnabled(False)
     
     def load_video(self, file_path):
         self.media_player.setSource(QUrl.fromLocalFile(file_path))
@@ -352,12 +465,27 @@ class VideoPlayer(QWidget):
     
     def position_changed(self, position):
         self.position_slider.setValue(position)
+        self._update_time_label(position, self.media_player.duration())
     
     def duration_changed(self, duration):
         self.position_slider.setRange(0, duration)
+        self._update_time_label(self.media_player.position(), duration)
     
     def set_position(self, position):
         self.media_player.setPosition(position)
+    
+    def _update_time_label(self, position, duration):
+        position_str = self._format_time(position)
+        duration_str = self._format_time(duration)
+        self.time_label.setText(f"{position_str} / {duration_str}")
+    
+    def _format_time(self, ms):
+        if ms <= 0:
+            return "00:00"
+        s = ms // 1000
+        m = s // 60
+        s %= 60
+        return f"{m:02d}:{s:02d}"
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -415,6 +543,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.video_player, "Video Preview")
         
         self.subtitle_editor = SubtitleEditor()
+        self.subtitle_editor.subtitle_updated.connect(self.on_subtitle_updated)
         self.tabs.addTab(self.subtitle_editor, "Subtitle Editor")
         
         self.style_settings = StyleSettings()
@@ -544,6 +673,10 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Extracting subtitles...")
         self.progress_bar.setValue(10)
         
+        self.extract_subtitles_btn.setEnabled(False)
+        self.generate_video_btn.setEnabled(False)
+        self.export_srt_btn.setEnabled(False)
+        
         self.worker = SubtitleWorker(
             self.input_video_path, 
             self.output_video_path, 
@@ -553,12 +686,16 @@ class MainWindow(QMainWindow):
         
         self.worker.progress_update.connect(self.update_progress)
         self.worker.finished.connect(self.extraction_finished)
-        
-        self.extract_subtitles_btn.setEnabled(False)
-        self.generate_video_btn.setEnabled(False)
-        self.export_srt_btn.setEnabled(False)
+        self.worker.subtitles_extracted.connect(self.set_subtitles)
         
         self.worker.start()
+    
+    def set_subtitles(self, subtitles):
+        self.subtitles = subtitles
+        self.subtitle_editor.load_subtitles(self.subtitles)
+    
+    def on_subtitle_updated(self):
+        self.subtitles = self.subtitle_editor.get_subtitles()
     
     def update_progress(self, status, progress):
         self.status_label.setText(status)
@@ -567,14 +704,6 @@ class MainWindow(QMainWindow):
     
     def extraction_finished(self, success, message):
         if success:
-            audio_path = subtitling_backend.extract_audio(self.input_video_path)
-            self.subtitles = subtitling_backend.transcribe_audio(audio_path, self.model_path)
-            
-            if os.path.exists(audio_path):
-                os.remove(audio_path)
-            
-            self.subtitle_editor.load_subtitles(self.subtitles)
-            
             self.tabs.setCurrentWidget(self.subtitle_editor)
             
             self.generate_video_btn.setEnabled(True)
@@ -600,8 +729,6 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please select an output location.")
             return
         
-        updated_subtitles = self.subtitle_editor.get_subtitles()
-        
         self.status_label.setText("Generating subtitled video...")
         self.progress_bar.setValue(10)
         
@@ -609,46 +736,41 @@ class MainWindow(QMainWindow):
         self.generate_video_btn.setEnabled(False)
         self.export_srt_btn.setEnabled(False)
         
-        self.worker = QThread()
+        updated_subtitles = self.subtitle_editor.get_subtitles()
         
-        def process_video():
-            try:
-                self.status_label.setText("Adding subtitles to video...")
-                self.progress_bar.setValue(30)
-                
-                style_settings = self.style_settings.get_settings()
-                
-                subtitling_backend.create_subtitled_video(
-                    self.input_video_path, updated_subtitles, self.output_video_path)
-                
-                self.status_label.setText("Video generation complete")
-                self.progress_bar.setValue(100)
-                
-                QTimer.singleShot(1000, lambda: self.video_player.load_video(self.output_video_path))
-                
-                QMessageBox.information(self, "Success", 
-                    f"Subtitled video has been created at:\n{self.output_video_path}")
-                
-                self.status_label.setText("Ready")
-                self.progress_bar.setValue(0)
-                
-                self.extract_subtitles_btn.setEnabled(True)
-                self.generate_video_btn.setEnabled(True)
-                self.export_srt_btn.setEnabled(True)
-                
-                self.tabs.setCurrentWidget(self.video_player)
-                
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to generate video: {str(e)}")
-                
-                self.status_label.setText("Ready")
-                self.progress_bar.setValue(0)
-                
-                self.extract_subtitles_btn.setEnabled(True)
-                self.generate_video_btn.setEnabled(True)
-                self.export_srt_btn.setEnabled(True)
+        self.video_worker = VideoGenerationWorker(
+            self.input_video_path,
+            self.output_video_path,
+            updated_subtitles,
+            self.style_settings.get_settings()
+        )
         
-        threading.Thread(target=process_video).start()
+        self.video_worker.progress_update.connect(self.update_progress)
+        self.video_worker.finished.connect(self.generation_finished)
+        
+        self.video_worker.start()
+    
+    def generation_finished(self, success, message, output_path):
+        if success:
+            self.status_label.setText("Video generation complete")
+            self.progress_bar.setValue(100)
+            
+            QTimer.singleShot(500, lambda: self.video_player.load_video(output_path))
+            
+            QMessageBox.information(self, "Success", 
+                f"Subtitled video has been created at:\n{output_path}")
+            
+            self.tabs.setCurrentWidget(self.video_player)
+        else:
+            QMessageBox.warning(self, "Error", message)
+        
+        self.extract_subtitles_btn.setEnabled(True)
+        self.generate_video_btn.setEnabled(True)
+        self.export_srt_btn.setEnabled(True)
+        
+        self.status_label.setText("Ready")
+        self.progress_bar.setValue(0)
+        self.status_bar.showMessage("Ready")
     
     def export_srt(self):
         if not self.subtitles:
