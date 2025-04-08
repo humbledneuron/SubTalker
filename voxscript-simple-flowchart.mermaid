@@ -1,0 +1,12 @@
+flowchart LR
+    A[Input Video] --> B[Extract Audio]
+    B --> C[Speech Recognition]
+    C --> D[Generate Subtitles]
+    A --> E[Process Video Frames]
+    D --> E
+    E --> F[Combine with Audio]
+    F --> G[Final Video with Subtitles]
+
+    style A fill:#bfb
+    style G fill:#fbb
+    style B,C,D,E,F fill:#f9f
