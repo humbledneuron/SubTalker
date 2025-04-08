@@ -3,6 +3,8 @@
 *.txt
 *.pptx
 
+*.srt
+
 __pycache__
 
 vosk-*/
