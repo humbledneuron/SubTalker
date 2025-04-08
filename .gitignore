@@ -5,6 +5,8 @@
 
 *.srt
 
+*.sh
+
 __pycache__
 
 vosk-*/
