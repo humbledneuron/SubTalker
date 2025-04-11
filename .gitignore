@@ -12,3 +12,5 @@ __pycache__
 vosk-*/
 
 video_subtitler/
+
+for_ss.py
